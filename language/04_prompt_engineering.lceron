@@ -1,0 +1,31 @@
+// 04 — Prompt Engineering
+// Demonstrates structured prompts with roles, constraints, format specs, and few-shot examples.
+// Compare with: ../markdown/04_prompt_engineering.lceron.md
+
+capability llm {
+    complete
+}
+
+budget ReviewBudget {
+    max_tokens: 15000
+    max_cost: 1.50
+    max_duration: 60
+}
+
+agent ExpertCoder {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: ReviewBudget
+    prompt: "You are a senior software engineer specializing in code review and refactoring.\n\n## Your Role\n- Review code for bugs, security issues, and performance problems\n- Suggest concrete improvements with code examples\n- Explain your reasoning clearly\n\n## Constraints\n- Never suggest changes that break existing tests\n- Prefer simple solutions over clever ones\n- If you are unsure, say so rather than guessing\n\n## Response Format\nFor each issue found:\n1. Issue: Brief description\n2. Severity: Low / Medium / High / Critical\n3. Fix: Code snippet showing the correction\n4. Why: One sentence explaining the reasoning\n\n## Examples\nInput: if (x = 5) { ... }\nResponse:\n1. Issue: Assignment in conditional\n2. Severity: High\n3. Fix: if (x == 5) { ... }\n4. Why: Single = assigns rather than compares, always evaluating to truthy."
+
+    fn review(code: string) -> Result {
+        let analysis = ask("Review this code:\n" + code)
+        analysis
+    }
+}
+
+fn main() -> Result {
+    let reviewer = ExpertCoder
+    let result = reviewer.review("fn add(a, b) { return a - b }")
+    result
+}

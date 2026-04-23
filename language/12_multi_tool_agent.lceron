@@ -1,0 +1,68 @@
+// 12 — Multi-Tool Agent
+// Demonstrates combining multiple tools, guards, and budgets in one agent.
+// This is a realistic customer service agent with safety constraints.
+// Compare with: ../markdown/12_multi_tool_agent.lceron.md
+
+capability llm {
+    complete
+}
+
+capability orders {
+    read
+    escalate requires read
+}
+
+taint user_input
+taint llm_output
+
+budget ServiceBudget {
+    max_tokens: 20000
+    max_cost: 2.00
+    max_duration: 120
+}
+
+// Guard: validate order ID format before database lookup
+guard valid_order_id(order_id: string) {
+    let pattern = "ORD-[0-9]+"
+    let min_length = 5
+}
+
+// Guard: rate limit escalations to prevent abuse
+guard escalation_limit() {
+    let max_escalations = 3
+    let window_minutes = 60
+}
+
+tool lookup_order(order_id: string) -> Result {
+    requires: [orders.read]
+    description: "Look up an order's status, tracking info, and delivery estimate"
+}
+
+tool search_faq(query: string) -> Result {
+    requires: [llm.complete]
+    description: "Search the FAQ knowledge base for answers to common questions"
+}
+
+tool escalate(reason: string, priority: string) -> Result {
+    requires: [orders.escalate]
+    description: "Escalate an issue to a human agent with context and priority level"
+}
+
+agent CustomerService {
+    capabilities: [llm.complete, orders.read, orders.escalate]
+    model: "llama3"
+    memory: true
+    budget: ServiceBudget
+    prompt: "You are a customer service agent with multiple tools.\nUse lookup_order for order status, search_faq for general questions, and escalate for urgent issues.\nAlways verify the order ID before looking up details.\nLog every interaction for quality assurance."
+
+    fn handle(message: string) -> Result {
+        let response = ask(message)
+        response
+    }
+}
+
+fn main() -> Result {
+    let agent = CustomerService
+    let result = agent.handle("Where is my order ORD-12345?")
+    result
+}

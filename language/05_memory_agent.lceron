@@ -1,0 +1,38 @@
+// 05 — Memory Agent
+// Demonstrates persistent memory backed by SQLite (lcn_memory.db).
+// Every interaction is stored as JSONL. The runtime auto-injects relevant
+// past context into the prompt before each LLM call.
+// Compare with: ../markdown/05_memory_agent.lceron.md
+
+capability llm {
+    complete
+}
+
+budget JournalBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+agent Journal {
+    capabilities: [llm.complete]
+    model: "llama3"
+    memory: true
+    budget: JournalBudget
+    prompt: "You are a personal journaling assistant with persistent memory.\nYou remember everything the user has told you across sessions.\nWhen the user returns, greet them by referencing previous conversations.\nHelp them reflect on patterns and progress over time.\nNever share memories from one user with another."
+
+    fn chat(message: string) -> Result {
+        // The runtime automatically loads relevant past interactions
+        // from lcn_memory.db before this call reaches the LLM.
+        let response = ask(message)
+        // After the LLM responds, the runtime stores both the user
+        // message and the response in the memory database.
+        response
+    }
+}
+
+fn main() -> Result {
+    let journal = Journal
+    let result = journal.chat("Today I finally fixed that bug I've been struggling with for a week.")
+    result
+}

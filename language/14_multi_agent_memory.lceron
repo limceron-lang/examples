@@ -1,0 +1,60 @@
+// 14 — Multi-Agent Memory
+// Demonstrates agents sharing a SQLite memory database for collaborative work.
+// NOTE: spawn and channel syntax is parsed but codegen is not fully implemented.
+// Compare with: ../markdown/14_multi_agent_memory.lceron.md
+
+capability llm {
+    complete
+    summarize
+}
+
+budget ResearchBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+budget WriterBudget {
+    max_tokens: 15000
+    max_cost: 1.50
+    max_duration: 90
+}
+
+agent Researcher {
+    capabilities: [llm.complete]
+    model: "llama3"
+    memory: true
+    budget: ResearchBudget
+    prompt: "You are a research agent.\nSearch for information and store findings in shared memory.\nTag each finding with source and confidence level."
+
+    fn investigate(topic: string) -> Result {
+        let findings = ask("Research: " + topic)
+        // Stored in lcn_memory.db — accessible to other agents
+        findings
+    }
+}
+
+agent Writer {
+    capabilities: [llm.complete, llm.summarize]
+    model: "llama3"
+    memory: true
+    budget: WriterBudget
+    prompt: "You are a writing agent.\nRead findings from shared memory and compose structured reports.\nCite the research agent's findings in your output."
+
+    fn compose(topic: string) -> Result {
+        // Reads from the same lcn_memory.db that Researcher writes to
+        let report = ask("Write report on: " + topic)
+        report
+    }
+}
+
+// Showcase: multi-agent orchestration with spawn + channels
+// let findings_ch = chan<string>(buffer: 10)
+// spawn Researcher { investigate("AI safety") |> findings_ch.send }
+// spawn Writer { let data = findings_ch.recv(); compose(data) }
+
+fn main() -> Result {
+    let researcher = Researcher
+    let findings = researcher.investigate("current state of AI agent frameworks")
+    findings
+}

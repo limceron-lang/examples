@@ -1,0 +1,46 @@
+// 03 — Capabilities
+// Demonstrates the capability DAG: hierarchical permissions with `requires` edges.
+// An agent can only use capabilities explicitly granted to it.
+// Compare with: ../markdown/03_capabilities.lceron.md
+
+// Capability hierarchy for LLM operations
+capability llm {
+    complete
+    classify
+    embed
+}
+
+// Capability hierarchy for web operations (DAG: fetch requires search)
+capability web {
+    search
+    fetch requires search
+}
+
+// Capability for file system operations
+capability fs {
+    read
+    write requires read
+}
+
+tool web_search(q: string) -> Result {
+    description: "Search the web for a query"
+    requires: [web.search]
+}
+
+agent WebResearcher {
+    capabilities: [llm.complete, llm.classify, web.search, web.fetch]
+    model: "llama3"
+    budget: { max_tokens: 20000, max_cost: 2.00, max_duration: 120 }
+    prompt: "You are a research assistant that can search the web and fetch pages.\nFor each query, search first to find relevant URLs, then fetch the best results.\nSummarize findings with source citations.\nYou can also classify content into categories."
+
+    fn research(topic: string) -> Result {
+        let results = web_search(topic)
+        results
+    }
+}
+
+fn main() -> Result {
+    let researcher = WebResearcher
+    let findings = researcher.research("Limceron programming language")
+    findings
+}

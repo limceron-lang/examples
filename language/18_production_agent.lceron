@@ -1,0 +1,130 @@
+// 18 — Production Agent (Capstone)
+// The complete reference implementation combining every compilable feature.
+// This is the "if you read one example, read this one" file.
+// Compare with: ../markdown/18_production_agent.lceron.md
+
+// ── Capabilities ──────────────────────────────────────────────
+
+capability llm {
+    complete
+    classify
+    embed
+}
+
+capability customer {
+    read
+    write requires read
+    escalate requires read
+}
+
+capability notifications {
+    send
+}
+
+// ── Taint Types ───────────────────────────────────────────────
+
+taint user_input       // All customer messages
+taint llm_output       // All LLM-generated content
+taint sanitized        // Validated and safe to use
+taint pii              // Personally identifiable information
+
+// ── Budgets ───────────────────────────────────────────────────
+
+budget RequestBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+budget SessionBudget {
+    max_tokens: 50000
+    max_cost: 5.00
+    max_duration: 300
+}
+
+// ── Guards ────────────────────────────────────────────────────
+
+guard input_validation(text: string) {
+    let max_length = 10000
+    let blocked_patterns = "ignore previous|system prompt|<script"
+}
+
+guard rate_limit() {
+    let max_actions = 60
+    let window_seconds = 3600
+}
+
+guard pii_filter(text: string) {
+    let redact_ssn = true
+    let redact_credit_card = true
+}
+
+// ── Tools ─────────────────────────────────────────────────────
+
+tool search_docs(query: string) -> Result {
+    requires: [llm.complete]
+    description: "Search the company knowledge base for relevant documentation"
+}
+
+tool lookup_account(customer_id: string) -> Result {
+    requires: [customer.read]
+    description: "Look up customer account details and recent activity"
+}
+
+tool classify_intent(message: string) -> Result {
+    requires: [llm.classify]
+    description: "Classify intent: billing, technical, account, general"
+}
+
+tool create_ticket(summary: string, priority: string) -> Result {
+    requires: [customer.write]
+    description: "Create a support ticket for human follow-up"
+}
+
+tool notify_team(channel: string, message: string) -> Result {
+    requires: [notifications.send]
+    description: "Send notification to the support team"
+}
+
+// ── Skill ─────────────────────────────────────────────────────
+
+skill CustomerSupport {
+    version: "1.0.0"
+    requires: [llm.complete, llm.classify, customer.read, customer.write]
+}
+
+// ── Supervisor ────────────────────────────────────────────────
+
+supervisor SupportSystem {
+    strategy: one_for_one
+    max_restarts: 10
+}
+
+// ── Agent ─────────────────────────────────────────────────────
+
+agent ProductionAgent {
+    capabilities: [llm.complete, llm.classify, customer.read, customer.write, customer.escalate, notifications.send]
+    model: "llama3"
+    memory: true
+    knowledge: { path: "./sample_docs", chunk_size: 500, overlap: 50 }
+    budget: SessionBudget
+    prompt: "You are a production-grade AI assistant for a customer support platform.\n\nRole:\nYou help customers with account issues, billing questions, and technical support.\nYou have access to the company knowledge base and can look up order information.\n\nBehavior:\n- Always greet the customer professionally\n- Search the knowledge base before answering factual questions\n- For billing issues, verify the customer's identity before sharing details\n- If you cannot resolve an issue, explain what you tried and offer to escalate\n\nSafety:\n- Never share one customer's data with another\n- Never execute actions without confirming the customer's intent\n- Stay within your capability boundaries\n- All interactions are logged for quality assurance"
+
+    fn handle(message: string) -> Result {
+        let intent = classify_intent(message)
+        let response = ask(message)
+        response
+    }
+
+    fn escalate_issue(summary: string) -> Result {
+        let ticket = create_ticket(summary, "high")
+        let notification = notify_team("support", summary)
+        ticket
+    }
+}
+
+fn main() -> Result {
+    let agent = ProductionAgent
+    let result = agent.handle("I was charged twice for my subscription last month")
+    result
+}

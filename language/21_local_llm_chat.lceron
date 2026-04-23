@@ -1,0 +1,74 @@
+// 21 — Local LLM Chat Agent
+//
+// A practical agent that connects to a local LLM server (vLLM, Ollama, etc.)
+// on localhost:8000 and answers questions interactively.
+//
+// Demonstrates:
+//   - Agent with prompt, model, budget
+//   - Capabilities and guards
+//   - Tool declaration
+//   - Taint tracking (user input → sanitized before prompt)
+//   - Budget enforcement (stops when tokens exhausted)
+//   - Dashboard (localhost:9090 when LCN_DASHBOARD=1)
+//
+// Build & run:
+//   ./build/limceron-stage0 build examples/language/21_local_llm_chat.lceron -o chat
+//   ./chat "What is Limceron?"
+//   LCN_DASHBOARD=1 ./chat "Explain taint tracking"
+
+// ── Capabilities ──────────────────────────────────────────────
+
+capability llm {
+    complete
+}
+
+capability knowledge {
+    search
+}
+
+// ── Taint ─────────────────────────────────────────────────────
+
+taint user_input
+taint sanitized
+
+// ── Budget ────────────────────────────────────────────────────
+
+budget ChatBudget {
+    max_tokens: 50000
+    max_cost: 1.00
+    max_duration: 300
+}
+
+// ── Guards ────────────────────────────────────────────────────
+
+guard input_length() {
+    let max_chars = 5000
+}
+
+guard rate_limit() {
+    let max_calls_per_minute = 20
+}
+
+// ── Tools ─────────────────────────────────────────────────────
+
+tool summarize(text: string) -> Result {
+    requires: [llm.complete]
+    description: "Summarize a long text into key points"
+}
+
+// ── Agent ─────────────────────────────────────────────────────
+
+agent ChatAssistant {
+    capabilities: [llm.complete, knowledge.search]
+    model: "Qwen/Qwen3-8B"
+    endpoint: "http://localhost:8000"
+    budget: ChatBudget
+    guards: [input_length, rate_limit]
+    prompt: "You are a helpful AI assistant running on Limceron.\n\nLimceron is the first compiled language designed for AI agents.\nIt prevents prompt injection at compile time via taint tracking,\nenforces budgets and capabilities, and produces single-binary agents.\n\nKeep responses concise and accurate. If you don't know something, say so."
+
+    // No explicit fn run() — the compiler auto-generates one that:
+    // 1. Checks budget
+    // 2. Calls the LLM with model + prompt + user message
+    // 3. Prints the response
+    // 4. Reads argv[1] as the user message
+}

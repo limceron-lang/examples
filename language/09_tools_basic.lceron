@@ -1,0 +1,49 @@
+// 09 — Tools (Basic)
+// Demonstrates tool declarations with requires clauses and descriptions.
+// Tools are the agent's interface to the outside world — each one declares
+// which capabilities it needs to function.
+// Compare with: ../markdown/09_tools_basic.lceron.md
+
+capability llm {
+    complete
+    classify
+}
+
+budget ToolBudget {
+    max_tokens: 15000
+    max_cost: 1.50
+    max_duration: 90
+}
+
+tool summarize(text: string) -> Result {
+    requires: [llm.complete]
+    description: "Condense a long text into a brief summary preserving key points"
+}
+
+tool translate(text: string, target_lang: string) -> Result {
+    requires: [llm.complete]
+    description: "Translate text into the specified target language"
+}
+
+tool extract_keywords(text: string) -> Result {
+    requires: [llm.classify]
+    description: "Extract the most important keywords and phrases from a text"
+}
+
+agent ToolUser {
+    capabilities: [llm.complete, llm.classify]
+    model: "llama3"
+    budget: ToolBudget
+    prompt: "You are an assistant equipped with tools for text processing.\nUse the summarize tool for long texts and the translate tool for language conversion.\nAlways tell the user which tool you are using and why.\nIf a task does not require a tool, respond directly."
+
+    fn process(text: string, action: string) -> Result {
+        let result = summarize(text)
+        result
+    }
+}
+
+fn main() -> Result {
+    let agent = ToolUser
+    let result = agent.process("Limceron is a programming language designed for AI agents...", "summarize")
+    result
+}

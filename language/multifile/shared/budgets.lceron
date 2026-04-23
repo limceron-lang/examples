@@ -1,0 +1,14 @@
+pub budget CategorizadorBudget {
+    max_tokens: 500000
+    max_cost: 5.00
+    max_duration: 3600
+}
+
+pub enum DevolucionCategoria {
+    FALTA_ANTECEDENTES
+    ERROR_INGRESO_PRESTACION
+    FALTA_EXAMEN_PREVIO
+    IMAGENES_INCOMPLETAS
+    CALIDAD_TECNICA
+    SIN_CATEGORIA
+}

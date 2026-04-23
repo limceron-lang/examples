@@ -1,0 +1,59 @@
+// 15 — MCP & A2A Protocols
+// Demonstrates external protocol integration for tool servers and agent-to-agent communication.
+// NOTE: MCP runtime exists; codegen wiring is in progress. A2A is showcase syntax.
+// Compare with: ../markdown/15_mcp_a2a.lceron.md
+
+capability llm {
+    complete
+}
+
+capability fs {
+    read
+    write requires read
+}
+
+budget ProtocolBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+// MCP: Connect to an external tool server
+// The runtime spawns the MCP server process and exposes its tools to the agent.
+// use mcp("npx @modelcontextprotocol/server-filesystem") as fs_server
+// use mcp("npx @modelcontextprotocol/server-github") as github
+
+// A2A: Connect to an external agent
+// The runtime discovers the agent via .well-known/agent.json
+// use a2a("https://partner.com/.well-known/agent.json") as partner
+
+tool read_file(path: string) -> Result {
+    requires: [fs.read]
+    description: "Read a file from the filesystem via MCP"
+}
+
+tool write_file(path: string, content: string) -> Result {
+    requires: [fs.write]
+    description: "Write a file to the filesystem via MCP"
+}
+
+agent ProtocolAgent {
+    capabilities: [llm.complete, fs.read, fs.write]
+    model: "llama3"
+    budget: ProtocolBudget
+    prompt: "You are an agent that uses MCP for filesystem access and A2A for agent communication.\nMCP tools are exposed as regular Limceron tools.\nA2A agents appear as remote tool providers."
+
+    fn process(instruction: string) -> Result {
+        // In production:
+        // let content = fs_server.read_file("./data/input.txt")
+        // let analysis = partner.analyze(content)
+        let result = ask(instruction)
+        result
+    }
+}
+
+fn main() -> Result {
+    let agent = ProtocolAgent
+    let result = agent.process("Read the config file and summarize its contents")
+    result
+}

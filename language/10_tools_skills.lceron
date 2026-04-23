@@ -1,0 +1,67 @@
+// 10 — Tools & Skills
+// Demonstrates skills: reusable bundles of tools + capabilities.
+// Skills are versioned and composable — an agent says `use SkillName` to gain
+// all the tools and capabilities that skill provides.
+// Compare with: ../markdown/10_tools_skills.lceron.md
+
+capability llm {
+    complete
+    summarize
+}
+
+capability web {
+    search
+    fetch requires search
+}
+
+// Skill: bundles web tools into a reusable package
+skill WebResearch {
+    version: "1.0.0"
+    requires: [web.search, web.fetch]
+}
+
+// Skill: bundles analysis tools
+skill TextAnalysis {
+    version: "1.0.0"
+    requires: [llm.complete, llm.summarize]
+}
+
+budget AnalystBudget {
+    max_tokens: 25000
+    max_cost: 2.50
+    max_duration: 180
+}
+
+tool search_web(query: string) -> Result {
+    requires: [web.search]
+    description: "Search the web for information on a topic"
+}
+
+tool fetch_page(url: string) -> Result {
+    requires: [web.fetch]
+    description: "Fetch and extract content from a web page"
+}
+
+tool analyze(text: string) -> Result {
+    requires: [llm.complete]
+    description: "Analyze text and produce structured insights"
+}
+
+agent Analyst {
+    capabilities: [llm.complete, llm.summarize, web.search, web.fetch]
+    model: "llama3"
+    budget: AnalystBudget
+    prompt: "You are a research analyst that uses reusable skill packages.\nYou have WebResearch and TextAnalysis skills.\nSearch, fetch, and analyze information systematically."
+
+    fn research(topic: string) -> Result {
+        let results = search_web(topic)
+        let analysis = analyze(topic)
+        analysis
+    }
+}
+
+fn main() -> Result {
+    let analyst = Analyst
+    let report = analyst.research("AI agent frameworks comparison")
+    report
+}

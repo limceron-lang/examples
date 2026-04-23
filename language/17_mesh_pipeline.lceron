@@ -1,0 +1,86 @@
+// 17 — Mesh Pipeline
+// Demonstrates multi-agent orchestration with typed data flow between stages.
+// NOTE: Mesh syntax is parsed as tokens but codegen is not implemented.
+// Compare with: ../markdown/17_mesh_pipeline.lceron.md
+
+capability llm {
+    complete
+    summarize
+}
+
+capability web {
+    search
+    fetch requires search
+}
+
+budget StageBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+// Mesh pipeline showcase:
+// mesh ResearchPipeline {
+//     stage "collect" -> Researcher {
+//         concurrency: 3
+//         timeout: 30s
+//     }
+//     stage "verify" -> FactChecker {
+//         concurrency: 2
+//         timeout: 20s
+//     }
+//     stage "synthesize" -> Writer {
+//         concurrency: 1
+//         timeout: 60s
+//     }
+//     backpressure: bounded(100)
+//     on_failure: skip_and_log
+// }
+
+supervisor PipelineSuper {
+    strategy: one_for_one
+    max_restarts: 5
+}
+
+agent Researcher {
+    capabilities: [llm.complete, web.search]
+    model: "llama3"
+    budget: StageBudget
+    prompt: "You are the collection stage. Gather raw information on the given topic.\nReturn structured findings with sources."
+
+    fn collect(topic: string) -> Result {
+        let data = ask("Research: " + topic)
+        data
+    }
+}
+
+agent FactChecker {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: StageBudget
+    prompt: "You are the verification stage. Check claims against sources.\nFlag any unverified or contradictory claims."
+
+    fn verify(claims: string) -> Result {
+        let verified = ask("Verify these claims: " + claims)
+        verified
+    }
+}
+
+agent Writer {
+    capabilities: [llm.complete, llm.summarize]
+    model: "llama3"
+    budget: StageBudget
+    prompt: "You are the synthesis stage. Compose a final report from verified findings.\nInclude citations and confidence levels."
+
+    fn synthesize(verified_data: string) -> Result {
+        let report = ask("Synthesize report from: " + verified_data)
+        report
+    }
+}
+
+fn main() -> Result {
+    // Sequential pipeline (mesh would run these concurrently):
+    let researcher = Researcher
+    let data = researcher.collect("AI agent safety best practices")
+    data
+}

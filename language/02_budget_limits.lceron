@@ -1,0 +1,53 @@
+// 02 — Budget Limits
+// Demonstrates budget composition: a tight per-request budget and a team-wide budget.
+// The runtime enforces these limits — the agent CANNOT exceed them.
+// Compare with: ../markdown/02_budget_limits.lceron.md
+
+capability llm {
+    complete
+}
+
+// Per-request budget: very strict
+budget TightBudget {
+    max_tokens: 2000
+    max_cost: 0.10
+    max_duration: 30
+}
+
+// Team-wide budget: shared across all agents in a session
+budget TeamBudget {
+    max_tokens: 100000
+    max_cost: 10.00
+    max_duration: 3600
+}
+
+agent Frugal {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: TightBudget
+    prompt: "You are a cost-conscious assistant that operates under strict resource limits.\nIf you approach your token or cost limit, wrap up your response gracefully.\nNever exceed 2000 tokens in a single response.\nKeep answers brief and to the point."
+
+    fn run(question: string) -> Result {
+        let answer = ask(question)
+        answer
+    }
+}
+
+// A second agent sharing the team budget
+agent Reviewer {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: TeamBudget
+    prompt: "You review responses for accuracy and brevity."
+
+    fn review(text: string) -> Result {
+        let feedback = ask("Review this for accuracy: " + text)
+        feedback
+    }
+}
+
+fn main() -> Result {
+    let frugal = Frugal
+    let result = frugal.run("Explain budgets in Limceron")
+    result
+}

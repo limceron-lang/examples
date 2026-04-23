@@ -1,0 +1,86 @@
+// 11 — Supervisors
+// Demonstrates Erlang-inspired supervision trees for agent fault tolerance.
+// Supervisors monitor child agents and restart them on failure.
+// Compare with: ../markdown/11_supervisor.lceron.md
+
+capability llm {
+    complete
+    classify
+}
+
+capability notifications {
+    send
+}
+
+budget WorkerBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+budget TeamBudget {
+    max_tokens: 50000
+    max_cost: 5.00
+    max_duration: 300
+}
+
+// Simple supervisor: if one child fails, restart only that child
+supervisor FrontDesk {
+    strategy: one_for_one
+    max_restarts: 5
+    window: 60
+    children: [Classifier, Responder, Notifier]
+}
+
+// Strict supervisor: if one child fails, restart all children after it
+// (useful when children depend on shared state built in order)
+supervisor Pipeline {
+    strategy: rest_for_all
+    max_restarts: 3
+    window: 120
+    children: [Classifier, Responder]
+}
+
+agent Classifier {
+    capabilities: [llm.classify]
+    model: "llama3"
+    budget: WorkerBudget
+    prompt: "You classify incoming messages into categories: billing, technical, general, urgent."
+
+    fn classify(message: string) -> Result {
+        let category = ask("Classify: " + message)
+        category
+    }
+}
+
+agent Responder {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: WorkerBudget
+    prompt: "You draft responses based on message category and content."
+
+    fn respond(category: string, message: string) -> Result {
+        let reply = ask("Category: " + category + "\nMessage: " + message)
+        reply
+    }
+}
+
+agent Notifier {
+    capabilities: [notifications.send]
+    model: "llama3"
+    budget: WorkerBudget
+    prompt: "You send notifications to the appropriate team."
+
+    fn notify(category: string, summary: string) -> Result {
+        let result = ask("Notify team for: " + category)
+        result
+    }
+}
+
+fn main() -> Result {
+    // In production, these agents would be registered with their supervisor.
+    // The supervisor monitors health and restarts on failure.
+    let classifier = Classifier
+    let result = classifier.classify("I can't access my account and I have a deadline tomorrow")
+    result
+}

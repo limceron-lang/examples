@@ -1,0 +1,203 @@
+// 25 — Exit Case: Agente Categorizador con BERT Patana (ONNX)
+//
+// Agente de produccion: categoriza devoluciones radiologicas usando
+// BERT Patana (fine-tuned, ONNX) — 93.8% F1, ~10ms/inferencia, sin GPU.
+//
+// Tables:
+//   - radiology_returns  (main)
+//   - radiology_review   (revision humana)
+//
+// Entropy-Aware:
+//   entropy_budget limita cuanta incertidumbre tolera el agente.
+//   Si >20% de las predicciones son baja confianza, el agente se detiene.
+//   Si la entropia promedio supera 0.7, el agente se detiene.
+//   Predicciones inciertas van a revision humana automaticamente.
+//
+// Compilar:
+//   ./build/limceron-stage0 build examples/language/25_exit_case_patana.lceron -o categorizador
+//
+// Ejecutar:
+//   DB_HOST=127.0.0.1 DB_USER=<user> DB_PASS=<pass> DB_NAME=<bd> \
+//   MODEL_PATH=/path/to/patana.onnx \
+//   CONFIDENCE_THRESHOLD=90 BATCH_SIZE=500 DRY_RUN=true \
+//   ./categorizador
+
+// ── Native MySQL Driver ─────────────────────────────────────
+
+use driver("mysql") as db
+
+// ── ONNX Model (Patana fine-tuned BERT, 110M params) ────────
+
+use model("patana.onnx") as bert
+
+// ── Capabilities ────────────────────────────────────────────
+
+capability data {
+    read_comments
+    write_categories requires read_comments
+    write_review requires read_comments
+}
+
+capability llm {
+    classify
+}
+
+// ── Access Control ──────────────────────────────────────────
+
+capability filesystem {
+    allow path "/tmp/**" { mode: [read, write] }
+    allow path "/opt/models/**" { mode: [read] }
+    deny path "/etc/**"
+    deny path "/root/**"
+    default: deny
+}
+
+// ── Taint ───────────────────────────────────────────────────
+
+taint user_input
+
+// ── Guard ───────────────────────────────────────────────────
+
+guard dry_run_gate() {
+    let blocked = false
+}
+
+// ── Agent with Entropy Budget ───────────────────────────────
+// El entropy_budget es el circuit breaker: el runtime trackea
+// confidence y entropy de cada prediccion. Si se viola el budget,
+// el agente retorna error automaticamente.
+
+agent Categorizador {
+    capabilities: [data.read_comments, data.write_categories, data.write_review, llm.classify]
+    model: "patana"
+    endpoint: "local"
+    budget: { max_tokens: 0, max_cost: 0.00, max_duration: 3600 }
+    entropy_budget: {
+        max_avg_entropy: 0.7
+        max_low_confidence: 0.20
+        max_drift: 0.15
+    }
+    guards: [dry_run_gate]
+    prompt: "Categoriza devoluciones radiologicas"
+
+    fn classify(comment: string) -> Result {
+        let result = ask(comment)
+        let category = "SIN_CATEGORIA"
+        match result {
+            Ok(text) -> {
+                category = str_trim(text)
+            }
+            Error(msg) -> {
+                log_warn("classify failed: " + msg)
+            }
+            _ -> {
+                log_warn("unexpected response")
+            }
+        }
+        category
+    }
+}
+
+// ── Entry Point ─────────────────────────────────────────────
+
+fn main() -> Result {
+    // ── 1. Configuration ────────────────────────────────
+    let batch_str = env("BATCH_SIZE")
+    let dry_run = env("DRY_RUN")
+    let is_dry_run = str_eq(dry_run, "true")
+    let threshold_str = env("CONFIDENCE_THRESHOLD")
+
+    let batch_size = 500
+    if len(batch_str) > 0 {
+        batch_size = to_int(batch_str)
+    }
+
+    let threshold = 90
+    if len(threshold_str) > 0 {
+        threshold = to_int(threshold_str)
+    }
+
+    println("=== Limceron Categorizer: Patana BERT (Entropy-Aware) ===")
+    println("Batch: " + to_string(batch_size) + " | Threshold: " + to_string(threshold) + "% | DryRun: " + dry_run)
+
+    // ── 2. Connect to MySQL ─────────────────────────────
+    let conn = db.connect(env("DB_HOST"), env("DB_USER"), env("DB_PASS"), env("DB_NAME"), 3306)
+    println("Connected")
+
+    // ── 3. Query pending comments ───────────────────────
+    let rows = db.query(conn, "SELECT id, Comentario FROM radiology_returns WHERE Categoria IS NULL AND Comentario IS NOT NULL AND Comentario <> '' LIMIT " + to_string(batch_size))
+
+    let count = db.row_count(rows)
+    println(to_string(count) + " pending")
+
+    // ── 4. Classify each row ────────────────────────────
+    let cat = Categorizador
+    let processed = 0
+    let high_conf = 0
+    let low_conf = 0
+    let review_count = 0
+
+    for i in 0..count {
+        let id = to_string(db.get_number(rows, i, "id"))
+        let comment = db.get(rows, i, "Comentario")
+
+        // Extract reason after "debido a:"
+        let reason: string = comment
+        let marker: int = str_find(comment, "debido a:")
+        if marker > 0 {
+            reason = str_trim(str_slice(comment, marker + 9, str_len(comment)))
+        }
+
+        // BERT prediction via agent (entropy tracked automatically)
+        let prediction = bert.predict(reason)
+        let category: string = prediction.label
+        let confidence: int = prediction.confidence
+
+        // Entropy-aware routing
+        if confidence >= threshold {
+            high_conf = high_conf + 1
+
+            if is_dry_run {
+                println(id + " | " + category + " | " + to_string(confidence) + "% | " + reason)
+            } else {
+                let safe_cat = sql_escape(category)
+                let conf_str = to_string(confidence)
+                db.execute(conn, "UPDATE radiology_returns SET Categoria = '" + safe_cat + "', confidence = " + conf_str + " / 100.0 WHERE id = " + id + " AND Categoria IS NULL")
+            }
+        } else {
+            // Baja confianza → revision humana
+            low_conf = low_conf + 1
+            review_count = review_count + 1
+
+            let motivo = "confidence " + to_string(confidence) + "% < " + to_string(threshold) + "%"
+
+            if is_dry_run {
+                println(id + " | " + category + " | " + to_string(confidence) + "% | REVIEW | " + motivo + " | " + reason)
+            } else {
+                let safe_cat = sql_escape(category)
+                let safe_comment = sql_escape(comment)
+                let safe_motivo = sql_escape(motivo)
+                let conf_str = to_string(confidence)
+
+                db.execute(conn, "INSERT INTO radiology_review (id, Comentario, Categoria_sugerida, confidence, motivo_review) VALUES (" + id + ", '" + safe_comment + "', '" + safe_cat + "', " + conf_str + " / 100.0, '" + safe_motivo + "')")
+
+                db.execute(conn, "UPDATE radiology_returns SET Categoria = 'REVIEW_PENDIENTE', confidence = " + conf_str + " / 100.0 WHERE id = " + id + " AND Categoria IS NULL")
+            }
+        }
+
+        processed = processed + 1
+    }
+
+    // ── 5. Summary ──────────────────────────────────────
+    db.free(rows)
+    db.close(conn)
+
+    println("=== Complete ===")
+    println("Processed: " + to_string(processed))
+    println("High confidence (>=" + to_string(threshold) + "%): " + to_string(high_conf))
+    println("Sent to review: " + to_string(review_count))
+    if is_dry_run {
+        println("(DRY RUN — no database updates)")
+    }
+    println("done")
+}

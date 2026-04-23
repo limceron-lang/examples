@@ -1,0 +1,39 @@
+// 06 — RAG Knowledge Base
+// Demonstrates knowledge ingestion and retrieval-augmented generation.
+// On first run, the runtime chunks documents from the path, indexes them
+// in SQLite FTS5, and uses BM25 scoring to find relevant passages.
+// Compare with: ../markdown/06_rag_knowledge.lceron.md
+
+capability llm {
+    complete
+}
+
+budget DocBudget {
+    max_tokens: 30000
+    max_cost: 3.00
+    max_duration: 120
+}
+
+agent DocExpert {
+    capabilities: [llm.complete]
+    model: "llama3"
+    memory: true
+    knowledge: { path: "./sample_docs", chunk_size: 500, overlap: 50 }
+    budget: DocBudget
+    prompt: "You are a documentation expert that answers questions using a knowledge base.\nAlways ground your answers in the provided documents.\nWhen citing information, mention the source document name.\nIf the knowledge base does not contain the answer, say so clearly.\nNever fabricate information that is not in the documents."
+
+    fn answer(question: string) -> Result {
+        // The runtime automatically:
+        // 1. Searches the FTS5 index for relevant chunks
+        // 2. Injects top-k results into the prompt context
+        // 3. Sends the augmented prompt to the LLM
+        let response = ask(question)
+        response
+    }
+}
+
+fn main() -> Result {
+    let expert = DocExpert
+    let result = expert.answer("How do I authenticate API requests?")
+    result
+}

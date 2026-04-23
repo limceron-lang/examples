@@ -1,0 +1,60 @@
+// 16 — Inference Router
+// Demonstrates routing LLM calls to different models based on strategy.
+// NOTE: Router syntax is parsed as tokens but codegen is not implemented.
+// Compare with: ../markdown/16_inference_router.lceron.md
+
+capability llm {
+    complete
+    classify
+    embed
+}
+
+budget RouterBudget {
+    max_tokens: 10000
+    max_cost: 1.00
+    max_duration: 60
+}
+
+// Router: directs inference calls to the optimal model
+// router InferenceRouter {
+//     route "fast" -> [llama-8b, gpt-4o-mini]
+//     route "quality" -> [llama-70b, gpt-4o, claude-sonnet]
+//     route "embedding" -> [nomic-embed, text-embedding-3-small]
+//     strategy: cost_aware
+//     fallback: [llama-8b]
+//     timeout: 10s
+// }
+
+// Batch inference showcase:
+// let results = batch {
+//     classify(item) for item in items
+//     concurrency: 10
+//     model: "fast"
+// }
+
+// Embedding showcase:
+// let vector = embed("search query", model: "nomic-embed")
+// let similar = kb.search_vector(vector, top_k: 5)
+
+tool classify_item(text: string) -> Result {
+    requires: [llm.classify]
+    description: "Classify a text item using the router's model selection"
+}
+
+agent RouterDemo {
+    capabilities: [llm.complete, llm.classify, llm.embed]
+    model: "llama3"
+    budget: RouterBudget
+    prompt: "You demonstrate inference routing.\nSimple queries go to fast models, complex ones to quality models.\nBatch processing and embeddings are also available."
+
+    fn route_query(query: string) -> Result {
+        let result = ask(query)
+        result
+    }
+}
+
+fn main() -> Result {
+    let agent = RouterDemo
+    let result = agent.route_query("Classify this customer feedback as positive or negative")
+    result
+}

@@ -1,0 +1,70 @@
+// 13 — Human-in-the-Loop
+// Demonstrates three positions for human involvement in agent workflows.
+// NOTE: ask/tell/wait syntax is parsed but codegen is not yet implemented.
+// Compare with: ../markdown/13_human_in_loop.lceron.md
+
+capability llm {
+    complete
+}
+
+capability human {
+    notify
+    approve
+}
+
+budget HumanLoopBudget {
+    max_tokens: 8000
+    max_cost: 0.80
+    max_duration: 60
+}
+
+guard requires_approval(action: string) {
+    let threshold = 100.00
+}
+
+tool draft_response(query: string) -> Result {
+    requires: [llm.complete]
+    description: "Draft a response for human review"
+}
+
+tool execute_action(action: string) -> Result {
+    requires: [llm.complete]
+    description: "Execute an action after human approval"
+}
+
+agent HumanLoop {
+    capabilities: [llm.complete, human.notify, human.approve]
+    model: "llama3"
+    budget: HumanLoopBudget
+    prompt: "You demonstrate human-in-the-loop patterns.\nPosition 1: Pre-approval for high-stakes actions.\nPosition 2: Post-review for content generation.\nPosition 3: Escalation when confidence is low."
+
+    // Position 1: Pre-approval
+    // ask human "Approve transfer of $500 to account X?" -> bool
+    // if approved { execute_action("transfer") }
+    fn pre_approval(action: string) -> Result {
+        let proposal = ask("Should I execute: " + action)
+        proposal
+    }
+
+    // Position 2: Post-review
+    // let draft = generate_content(topic)
+    // tell human "Review this draft: {draft}"
+    // wait for human -> revised
+    fn post_review(topic: string) -> Result {
+        let draft = draft_response(topic)
+        draft
+    }
+
+    // Position 3: Escalation
+    // if confidence < 0.7 { tell human "I need help with: {query}" }
+    fn escalation(query: string) -> Result {
+        let response = ask(query)
+        response
+    }
+}
+
+fn main() -> Result {
+    let agent = HumanLoop
+    let result = agent.pre_approval("Send newsletter to 10,000 subscribers")
+    result
+}

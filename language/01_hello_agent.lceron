@@ -1,0 +1,31 @@
+// 01 — Hello Agent
+// The simplest possible Limceron agent: one capability, one budget, one prompt.
+// Compare with: ../markdown/01_hello_agent.lceron.md
+
+capability llm {
+    complete
+}
+
+budget HelloBudget {
+    max_tokens: 5000
+    max_cost: 0.50
+    max_duration: 30
+}
+
+agent Hello {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: HelloBudget
+    prompt: "You are a friendly AI assistant powered by Limceron.\nWhen asked a question, respond clearly and concisely.\nAlways stay within your budget constraints."
+
+    fn run(question: string) -> Result {
+        let answer = ask(question)
+        answer
+    }
+}
+
+fn main() -> Result {
+    let agent = Hello
+    let result = agent.run("What is Limceron?")
+    result
+}

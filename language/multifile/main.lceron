@@ -1,0 +1,7 @@
+use agents.categorizer
+use shared.budgets
+
+fn main() -> Result {
+    let cat = Categorizador
+    cat.run("Faltan antecedentes clinicos del paciente")
+}

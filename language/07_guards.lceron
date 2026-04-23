@@ -1,0 +1,53 @@
+// 07 — Guards
+// Demonstrates guard functions: pre-conditions that run before every LLM call.
+// Guards are the runtime safety net — they physically prevent unsafe operations.
+// Compare with: ../markdown/07_guards.lceron.md
+
+capability llm {
+    complete
+}
+
+budget SecureBudget {
+    max_tokens: 8000
+    max_cost: 0.80
+    max_duration: 45
+}
+
+// Guard 1: Rate limiting — simple counter check
+guard rate_limit() {
+    let max_actions = 50
+    let window_seconds = 3600
+}
+
+// Guard 2: Content filter — checks input text for injection patterns
+guard content_filter(text: string) {
+    let max_length = 10000
+    let blocked_patterns = "ignore previous|system prompt|execute code"
+}
+
+// Guard 3: Output length — caps response size
+guard output_length() {
+    let max_response_tokens = 4000
+}
+
+agent SecureAssistant {
+    capabilities: [llm.complete]
+    model: "llama3"
+    budget: SecureBudget
+    prompt: "You are a security-conscious assistant that validates all inputs before processing.\nYour guards enforce rate limiting, content filtering, and output size limits.\nIf a request violates any guard, explain which constraint was triggered and why.\nAlways prefer safety over helpfulness when they conflict."
+
+    fn ask_safely(question: string) -> Result {
+        // Guards run automatically before the LLM call:
+        // 1. rate_limit() checks the action counter
+        // 2. content_filter(question) scans for injection
+        // 3. output_length() caps the response
+        let response = ask(question)
+        response
+    }
+}
+
+fn main() -> Result {
+    let agent = SecureAssistant
+    let result = agent.ask_safely("What are the OWASP Top 10?")
+    result
+}

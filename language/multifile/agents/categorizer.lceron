@@ -1,0 +1,23 @@
+use shared.budgets
+
+pub capability llm { classify }
+pub capability data { read_comments }
+
+pub guard dry_run_gate() { let blocked = false }
+
+pub agent Categorizador {
+    capabilities: [llm.classify, data.read_comments]
+    model: "Qwen/Qwen3-8B"
+    budget: CategorizadorBudget
+    guards: [dry_run_gate]
+    prompt: "Classify radiology comments. Respond with category name only."
+
+    fn run(input: string) -> Result {
+        let result = ask(input)
+        match result {
+            Ok(text) -> { println(text) }
+            Error(msg) -> { println(msg) }
+            _ -> { println("unexpected") }
+        }
+    }
+}

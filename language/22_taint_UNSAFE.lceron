@@ -1,0 +1,53 @@
+// 22b — UNSAFE VERSION: This file WILL NOT COMPILE cleanly.
+//
+// The taint checker detects that user input (from ask()) flows
+// into another ask() call — a prompt injection vector.
+//
+// Try:  ./build/limceron-stage0 emit examples/language/22_taint_UNSAFE.lceron
+//
+// Expected output:
+//   error: tainted data flows to LLM call in 'VulnerableBot.handle'
+//     --> 22_taint_UNSAFE.lceron:30:28
+//      |
+//   30 |         let response = ask(injected)
+//      |                            ^
+//      = help: sanitize tainted input before passing to LLM —
+//              this is a potential prompt injection vector
+
+taint user_input
+
+capability llm {
+    complete
+}
+
+budget DemoBudget {
+    max_tokens: 10000
+    max_cost: 0.50
+    max_duration: 60
+}
+
+agent VulnerableBot {
+    capabilities: [llm.complete]
+    model: "Qwen/Qwen3-8B"
+    endpoint: "http://localhost:8000"
+    budget: DemoBudget
+    guards: [input_guard]
+    prompt: "You are a bank assistant. You can check balances and transfer money."
+
+    fn handle(topic: string) -> Result {
+        // Step 1: Get user input — this is TAINTED (inferred from ask())
+        let user_msg = ask(topic)
+
+        // Step 2: Concatenate tainted data into prompt — TAINT PROPAGATES
+        let injected = "The user said: " + user_msg
+
+        // Step 3: Pass tainted string to LLM — COMPILE ERROR
+        // The compiler catches this: tainted data → LLM call = prompt injection
+        let response = ask(injected)
+        response
+    }
+}
+
+guard input_guard() {
+    let max_len = 1000
+}

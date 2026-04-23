@@ -1,0 +1,200 @@
+// 19 — Cloud Cost Optimization Mesh (Production)
+//
+// Two expert agents coordinated via mesh pipeline:
+//   1. CostAnalyst  — analyzes workloads, provisioning, and spending patterns
+//   2. CostAuditor  — audits findings using cloud-native tools (AWS Cost Explorer,
+//                     Trusted Advisor, Compute Optimizer) and delivers actionable
+//                     recommendations to a human for approval
+//
+// Demonstrates: mesh pipelines, channels, ask (HITL), tell, guards,
+//               taint tracking, budgets, MCP tools, and multi-agent coordination.
+//
+// This is a production-ready pattern for any cloud cost governance workflow.
+
+// ── Protocol Imports ──────────────────────────────────────────
+
+use mcp("npx @anthropic/mcp-server-aws") as aws
+
+// ── Capabilities ──────────────────────────────────────────────
+
+capability llm {
+    complete
+    summarize
+}
+
+capability cloud {
+    read_metrics
+    read_billing requires read_metrics
+    read_recommendations requires read_metrics
+    execute_resize requires read_recommendations
+}
+
+capability notifications {
+    send
+}
+
+// ── Taint Types ───────────────────────────────────────────────
+
+taint cloud_data       // Raw data from cloud APIs — may contain account IDs, ARNs
+taint analysis         // LLM-generated analysis — needs human validation
+taint approved         // Human-approved recommendations — safe to execute
+
+// ── Budgets ───────────────────────────────────────────────────
+
+budget AnalysisBudget {
+    max_tokens: 30000
+    max_cost: 3.00
+    max_duration: 120
+}
+
+budget AuditBudget {
+    max_tokens: 50000
+    max_cost: 5.00
+    max_duration: 300
+}
+
+// ── Guards ────────────────────────────────────────────────────
+
+guard cost_threshold(estimated_savings: f64) {
+    // Only surface recommendations with meaningful impact
+    let min_savings = 50
+}
+
+guard no_production_resize(resource_tag: string) {
+    // Never auto-resize production resources without approval
+    let blocked = "production"
+}
+
+guard rate_limit_cloud_api() {
+    let max_calls = 100
+    let window_seconds = 3600
+}
+
+// ── Tools ─────────────────────────────────────────────────────
+
+tool fetch_cost_explorer(account_id: string, days: i32) -> Result {
+    requires: [cloud.read_billing]
+    description: "Fetch AWS Cost Explorer data: spend by service, daily trends, anomalies"
+}
+
+tool fetch_compute_optimizer(account_id: string) -> Result {
+    requires: [cloud.read_recommendations]
+    description: "Fetch AWS Compute Optimizer recommendations for EC2, EBS, Lambda"
+}
+
+tool fetch_trusted_advisor(account_id: string) -> Result {
+    requires: [cloud.read_recommendations]
+    description: "Fetch AWS Trusted Advisor cost optimization checks"
+}
+
+tool fetch_cloudwatch_metrics(resource_ids: string) -> Result {
+    requires: [cloud.read_metrics]
+    description: "Fetch CloudWatch utilization metrics for specified resources"
+}
+
+tool resize_instance(instance_id: string, new_type: string) -> Result {
+    requires: [cloud.execute_resize]
+    guard: no_production_resize
+    description: "Resize an EC2 instance to a recommended type"
+}
+
+tool send_report(target: string, report: string) -> Result {
+    requires: [notifications.send]
+    description: "Send cost optimization report to Slack/email"
+}
+
+// ── Skill ─────────────────────────────────────────────────────
+
+skill CloudCostOps {
+    version: "1.0.0"
+    requires: [cloud.read_metrics, cloud.read_billing, cloud.read_recommendations, llm.complete]
+}
+
+// ── Supervisor ────────────────────────────────────────────────
+
+supervisor CostPipelineSupervisor {
+    strategy: one_for_all
+    max_restarts: 3
+}
+
+// ── Agent 1: Cost Analyst ─────────────────────────────────────
+
+agent CostAnalyst {
+    capabilities: [llm.complete, llm.summarize, cloud.read_metrics, cloud.read_billing, cloud.read_recommendations]
+    model: "claude-sonnet"
+    budget: AnalysisBudget
+    memory: true
+    prompt: "You are an expert cloud cost analyst.\n\nRole:\nAnalyze AWS infrastructure costs, identify waste, and produce structured findings.\n\nProcess:\n1. Pull Cost Explorer data for the requested period\n2. Fetch Compute Optimizer and Trusted Advisor recommendations\n3. Cross-reference utilization metrics from CloudWatch\n4. Identify: underutilized instances, oversized storage, idle resources, missing reservations\n5. Quantify estimated monthly savings for each finding\n\nOutput format:\nReturn a structured JSON report with:\n- executive_summary: 2-3 sentence overview\n- total_monthly_waste: estimated dollars\n- findings: array of { resource, current_cost, recommended_action, estimated_savings, confidence }\n- methodology: what data sources were consulted"
+
+    fn analyze(account_id: string, days: i32) -> Result {
+        // Gather data from multiple cloud sources
+        let cost_data = fetch_cost_explorer(account_id, days)
+        let compute_recs = fetch_compute_optimizer(account_id)
+        let advisor_checks = fetch_trusted_advisor(account_id)
+
+        // Synthesize findings using LLM
+        let analysis_prompt = "Analyze this cloud cost data and produce optimization findings:\n\nCost Explorer: " + account_id + "\nCompute Optimizer recommendations available\nTrusted Advisor checks available\n\nProduce structured findings with estimated savings."
+        let findings = ask(analysis_prompt)
+        findings
+    }
+}
+
+// ── Agent 2: Cost Auditor ─────────────────────────────────────
+
+agent CostAuditor {
+    capabilities: [llm.complete, cloud.read_metrics, cloud.read_recommendations, cloud.execute_resize, notifications.send]
+    guards: [no_production_resize, cost_threshold]
+    model: "claude-sonnet"
+    budget: AuditBudget
+    memory: true
+    prompt: "You are a cloud cost auditor.\n\nRole:\nValidate cost optimization findings, verify metrics, and produce a prioritized\nrecommendation list for human approval.\n\nProcess:\n1. Receive findings from the Cost Analyst\n2. Verify each finding against live CloudWatch metrics\n3. Validate that recommended actions are safe (check tags, dependencies)\n4. Prioritize by: savings magnitude, implementation risk, effort required\n5. Format as an actionable checklist for the operations team\n\nOutput format:\nPrioritized recommendations with:\n- Priority (P0-P3)\n- Resource identifier\n- Current vs recommended configuration\n- Estimated monthly savings\n- Risk level (low/medium/high)\n- Implementation steps\n- Requires approval: yes/no"
+
+    fn audit(analyst_findings: string) -> Result {
+        // Verify findings against live metrics
+        let verified = ask("Audit these cost findings and verify against live metrics:\n\n" + analyst_findings)
+
+        // Deliver recommendations to human via HITL
+        tell user verified
+
+        // Wait for human approval before any action
+        let approval = ask("The recommendations above are ready. Reply 'approve' to proceed with safe (non-production) optimizations, or 'review' to get a detailed breakdown.")
+
+        approval
+    }
+}
+
+// ── Mesh Pipeline ─────────────────────────────────────────────
+
+mesh CloudCostPipeline {
+    stage "analyze" -> CostAnalyst {
+        timeout: 120
+    }
+    stage "audit" -> CostAuditor {
+        timeout: 300
+    }
+}
+
+// ── Router (optional: route by analysis complexity) ───────────
+
+router CostModelRouter {
+    route "quick" -> [llama3, gpt4_mini]
+    route "deep" -> [claude_sonnet, gpt4]
+    strategy: cost_aware
+    fallback: "llama3"
+}
+
+// ── Entry Point ───────────────────────────────────────────────
+
+fn main() -> Result {
+    // Run the mesh pipeline:
+    //   1. CostAnalyst gathers data and produces findings
+    //   2. CostAuditor verifies, prioritizes, and delivers to human
+    //   3. Human approves/reviews via ask() in the dashboard
+    let analyst = CostAnalyst
+    let findings = analyst.analyze("123456789012", 30)
+
+    let auditor = CostAuditor
+    let recommendations = auditor.audit("Cloud cost findings ready for audit")
+
+    recommendations
+}

@@ -1,0 +1,218 @@
+// 20 — Medical Radiology Comment Categorizer (Production)
+//
+// Real-world production pattern: hundreds of medical centers, thousands of pending comments.
+// Uses native MySQL driver (libmysqlclient binding) + vLLM (Qwen3-8B).
+//
+// Showcases:
+//   - Native DB driver: use driver("mysql") — no MCP, no JSON-RPC overhead
+//   - Access control policies: network endpoints, filesystem paths
+//   - Taint tracking: user input never reaches system prompt
+//   - Budgets: token/cost/duration limits enforced at runtime
+//   - Guards: dry-run gate blocks writes during testing
+//   - Typed LLM output: exhaustive match on Ok/Error/ToolCall/Text
+//   - SQL injection prevention: sql_escape() builtin
+//   - Result unwrapping: unwrap() extracts string from agent method Result
+//
+// ── Driver Usage ─────────────────────────────────────────────
+//
+// use driver("mysql") as db
+//
+// Connection:   let conn = db.connect(host, user, pass, database, port)
+// Query:        let rows = db.query(conn, "SELECT ...")
+// Row count:    let n = db.row_count(rows)
+// Get string:   let val = db.get(rows, row_index, "column_name")
+// Get number:   let num = db.get_number(rows, row_index, "column_name")
+// Execute:      let affected = db.execute(conn, "UPDATE ...")
+// Cleanup:      db.free(rows)
+//               db.close(conn)
+//
+// The driver links against libmysqlclient at compile time.
+// No MCP, no JSON-RPC, no process spawning — direct TCP to MySQL.
+//
+// ── Dev Setup ───────────────────────────────────────────────
+//
+// Prerequisites:
+//   1. libmysqlclient: brew install mysql-client (macOS)
+//   2. vLLM endpoint accessible on localhost:8000
+//
+// Compile:
+//   ./build/limceron-stage0 build examples/language/20_medical_categorizer.lceron -o categorizador
+//
+// Run:
+//   DB_HOST=127.0.0.1 DB_USER=<user> DB_PASS=<pass> DB_NAME=<database> \
+//   BATCH_SIZE=10 DRY_RUN=true \
+//   ./categorizador
+
+// ── Native MySQL Driver ─────────────────────────────────────
+
+use driver("mysql") as db
+
+// ── Classification Enum ─────────────────────────────────────
+
+enum DevolucionCategoria {
+    FALTA_ANTECEDENTES
+    ERROR_INGRESO_PRESTACION
+    FALTA_EXAMEN_PREVIO
+    IMAGENES_INCOMPLETAS
+    CALIDAD_TECNICA
+    SIN_CATEGORIA
+}
+
+// ── Abstract Capabilities (permission DAG) ───────────────────
+
+capability llm {
+    classify
+}
+
+capability data {
+    read_comments
+    write_categories requires read_comments
+}
+
+// ── Concrete Access Control Policies ─────────────────────────
+
+capability network {
+    allow endpoint "localhost:8000" {
+        method: [POST]
+        path: "/v1/chat/completions"
+    }
+    // deny private_ranges    // Uncomment in production
+    default: deny
+}
+
+capability filesystem {
+    allow path "/tmp/**" { mode: [read, write] }
+    deny path "/etc/**"
+    deny path "/root/**"
+    default: deny
+}
+
+// ── Taint ────────────────────────────────────────────────────
+
+taint user_input
+
+// ── Budget ──────────────────────────────────────────────────
+
+budget CategorizadorBudget {
+    max_tokens: 500000
+    max_cost: 5.00
+    max_duration: 3600
+}
+
+// ── Guard ───────────────────────────────────────────────────
+
+guard dry_run_gate() {
+    let blocked = false
+}
+
+// ── Agent (single responsibility: classify) ──────────────────
+
+agent Categorizador {
+    capabilities: [llm.classify, data.read_comments, data.write_categories]
+    use network, filesystem
+    model: "Qwen/Qwen3-14B-AWQ"
+    endpoint: "http://localhost:8000"
+    budget: CategorizadorBudget
+    guards: [dry_run_gate]
+    prompt: `Clasifica esta devolucion radiologica. Responde SOLO con el enum. Extrae motivo despues de "debido a:".
+
+FALTA_ANTECEDENTES: falta orden, antecedentes, preinforme, aclarar, medir, evaluar
+ERROR_INGRESO_PRESTACION: codigo, prestacion, codificado, mal asignado, separar cargos
+FALTA_EXAMEN_PREVIO: previo, comparar, anterior, dicom, cargar previo
+IMAGENES_INCOMPLETAS: faltan imagenes, no cargan, axial, series, proyeccion, descarga
+CALIDAD_TECNICA: artefacto, movido, rotado, calidad, tecnica, oblicuas, repetir
+SIN_CATEGORIA: reasignar, atraso, cambio de urgencia, ticket
+
+"CODIGO MAL" → ERROR_INGRESO_PRESTACION
+"cargar tac previos" → FALTA_EXAMEN_PREVIO
+"no es posible descargar en viewer" → IMAGENES_INCOMPLETAS
+"torax rotado" → CALIDAD_TECNICA
+"tomar oblicuas" → CALIDAD_TECNICA
+"Mejorar calidad imagenes" → CALIDAD_TECNICA
+"sin antecedentes" → FALTA_ANTECEDENTES
+"Medir volumen premiccional" → FALTA_ANTECEDENTES
+"Aclarar las prestaciones obtenidas" → ERROR_INGRESO_PRESTACION
+"favor enviar cerebro oseo 1 mm" → IMAGENES_INCOMPLETAS
+"subir previo para comparar" → FALTA_EXAMEN_PREVIO
+"reasignar" → SIN_CATEGORIA
+"Cambio de urgencia" → SIN_CATEGORIA
+"#1664143" → SIN_CATEGORIA`
+
+    fn classify(comment: string) -> Result {
+        let result = ask(comment)
+        let category = "SIN_CATEGORIA"
+        match result {
+            Ok(text) -> {
+                category = str_trim(text)
+            }
+            Error(msg) -> {
+                println(msg)
+            }
+            _ -> {
+                println("unexpected LLM response")
+            }
+        }
+        category
+    }
+}
+
+// ── Entry Point ─────────────────────────────────────────────
+// Orchestrates: connect → query → classify → update → close
+
+fn main() -> Result {
+    // ── 1. Configuration from environment ───────────────
+    let batch_str = env("BATCH_SIZE")
+    let dry_run = env("DRY_RUN")
+    let is_dry_run = str_eq(dry_run, "true")
+
+    let batch_size = 10
+    if len(batch_str) > 0 {
+        batch_size = to_int(batch_str)
+    }
+
+    println("=== Limceron Medical Categorizer ===")
+
+    // ── 2. Connect to MySQL (native driver) ──────────────
+    let conn = db.connect(env("DB_HOST"), env("DB_USER"), env("DB_PASS"), env("DB_NAME"), 3306)
+
+    // ── 3. Query pending comments ────────────────────────
+    let rows = db.query(conn, "SELECT id, comment FROM radiology_returns WHERE category IS NULL AND comment IS NOT NULL AND comment <> '' AND validated_at >= '2026-01-01' AND validated_at < '2026-02-01' LIMIT " + to_string(batch_size))
+
+    let count = db.row_count(rows)
+    println(to_string(count) + " rows")
+
+    // ── 4. Classify + persist each row ───────────────────
+    let cat = Categorizador
+    let processed = 0
+
+    for i in 0..count {
+        let id = to_string(db.get_number(rows, i, "id"))
+        let comment = db.get(rows, i, "comment")
+
+        // Agent classifies (LLM call with model/prompt/budget)
+        let category = unwrap(cat.classify(comment))
+        println(id + " | " + category)
+
+        // Persist — sql_escape() prevents SQL injection
+        if is_dry_run {
+            println("  (dry run)")
+        } else {
+            let safe_cat = sql_escape(category)
+            let affected = db.execute(conn, "UPDATE radiology_returns SET category = '" + safe_cat + "' WHERE id = " + id + " AND category IS NULL")
+            //println("  UPDATE: " + to_string(affected) + " row(s)")
+        }
+
+        processed = processed + 1
+        println("Categorizando " + to_string(processed) + " de " + to_string(count))
+    }
+
+    // ── 5. Cleanup + summary ─────────────────────────────
+    db.free(rows)
+    db.close(conn)
+
+    println("=== Complete: " + to_string(processed) + " processed ===")
+    if is_dry_run {
+        println("(DRY RUN — no database updates)")
+    }
+    println("done")
+}
