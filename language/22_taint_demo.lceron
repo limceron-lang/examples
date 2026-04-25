@@ -12,11 +12,11 @@
 //
 // To test:
 //   1. Compile the SAFE version (default):
-//      ./build/limceron-stage0 build examples/language/22_taint_demo.lceron -o taint-demo
+//      limceron build examples/language/22_taint_demo.lceron -o taint-demo
 //      ./taint-demo "Tell me about quantum computing"
 //
 //   2. Uncomment the UNSAFE version and comment the SAFE one:
-//      ./build/limceron-stage0 emit examples/language/22_taint_demo.lceron
+//      limceron emit examples/language/22_taint_demo.lceron
 //      → error: tainted data flows to LLM call in 'VulnerableBot.handle'
 //        = help: sanitize tainted input before passing to LLM
 

@@ -14,7 +14,7 @@
 //   Predicciones inciertas van a revision humana automaticamente.
 //
 // Compilar:
-//   ./build/limceron-stage0 build examples/language/25_exit_case_patana.lceron -o categorizador
+//   limceron build examples/language/25_exit_case_patana.lceron -o categorizador
 //
 // Ejecutar:
 //   DB_HOST=127.0.0.1 DB_USER=<user> DB_PASS=<pass> DB_NAME=<bd> \

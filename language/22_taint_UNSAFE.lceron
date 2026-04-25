@@ -3,7 +3,7 @@
 // The taint checker detects that user input (from ask()) flows
 // into another ask() call — a prompt injection vector.
 //
-// Try:  ./build/limceron-stage0 emit examples/language/22_taint_UNSAFE.lceron
+// Try:  limceron emit examples/language/22_taint_UNSAFE.lceron
 //
 // Expected output:
 //   error: tainted data flows to LLM call in 'VulnerableBot.handle'

@@ -182,7 +182,7 @@ fn main() -> Result {
 
 Compilar:
 
-    ./build/limceron-stage0 build examples/markdown/25_exit_case_patana.lceron.md -o categorizador
+    limceron build examples/markdown/25_exit_case_patana.lceron.md -o categorizador
 
 Ejecutar:
 

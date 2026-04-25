@@ -22,7 +22,7 @@ Example programs demonstrating Limceron language features.
 Every `.lceron.md` file is simultaneously a readable document and a compilable program:
 
 ```bash
-./build/limceron-stage0 build examples/markdown/25_exit_case_patana.lceron.md -o categorizer
+limceron build examples/markdown/25_exit_case_patana.lceron.md -o categorizer
 ```
 
 ## Quick links
